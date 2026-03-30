@@ -3,13 +3,16 @@ const models = require('../models');
 
 // get the Cat model
 const { Cat } = models;
+const { Dog } = models;
 
 // Function to handle rendering the index page.
 const hostIndex = async (req, res) => {
   //Start with the name as unknown
-  let name = 'unknown';
+  let catName = 'unknown';
 
-  try{
+  let dogName = 'unknown';
+
+  try {
     /* Cat.findOne() will find a cat that matches the query given to it as the first parameter.
        In this case, we give it an empty object so it will match against any object it finds.
        The second parameter is essentially a filter for the values we want. This works similarly
@@ -19,14 +22,23 @@ const hostIndex = async (req, res) => {
        in descending order (so that more recent things are "on the top"). Since we are only
        finding one, this query will either find the most recent cat if it exists, or nothing.
     */
-    const doc = await Cat.findOne({}, {}, { 
-      sort: {'createdDate': 'descending'}
+    const catDoc = await Cat.findOne({}, {}, {
+      sort: { 'createdDate': 'descending' }
+    }).lean().exec();
+
+    const dogDoc = await Dog.findOne({}, {}, {
+      sort: { 'createdDate': 'descending' }
     }).lean().exec();
 
     //If we did get a cat back, store it's name in the name variable.
-    if(doc) {
-      name = doc.name;
+    if (catDoc) {
+      catName = catDoc.name;
     }
+
+    if (dogDoc) {
+      dogName = dogDoc.name;
+    }
+
   } catch (err) {
     //Just log out the error for our records.
     console.log(err);
@@ -36,7 +48,8 @@ const hostIndex = async (req, res) => {
      We pass it a number of variables to populate the page.
   */
   res.render('index', {
-    currentName: name,
+    currentCatName: catName,
+    currentDogName: dogName,
     title: 'Home',
     pageName: 'Home Page',
   });
@@ -96,13 +109,36 @@ const hostPage2 = (req, res) => {
 };
 
 // Function to render the untemplated page3.
-const hostPage3 = (req, res) => {
+const hostPage3 = async (req, res) => {
   res.render('page3');
+  
+
+};
+
+// Function for rendering the page1 template
+// Page1 has a loop that iterates over an array of cats
+const hostPage4 = async (req, res) => {
+  try {
+    const docs = await Dog.find({}).lean().exec();
+
+    // Once we get back the docs array, we can send it to page1.
+    return res.render('page4', { dogs: docs });
+  } catch (err) {
+    /* If our database returns an error, or is unresponsive, we will print that error to
+       our console for us to see. We will also send back an error message to the client.
+
+       We don't want to send back the err from mongoose, as that would be unsafe. You
+       do not want people to see actual error messages from your server or database, or else
+       they can exploit them to attack your server.
+    */
+    console.log(err);
+    return res.status(500).json({ error: 'failed to find dogs' });
+  }
 };
 
 // Get name will return the name of the last added cat.
 const getName = async (req, res) => {
-  try{
+  try {
     /* Here we are trying to do the exact same thing we did in host index up
        above. We want to find the most recently added cat. The only difference
        here is that we are using the query .sort() function rather than passing
@@ -110,19 +146,19 @@ const getName = async (req, res) => {
        functionally the same. We are just seeing that it can be written in
        more than one way.
     */
-    const doc = await Cat.findOne({}).sort({'createdDate': 'descending'}).lean().exec();
+    const doc = await Cat.findOne({}).sort({ 'createdDate': 'descending' }).lean().exec();
 
     //If we did get a cat back, store it's name in the name variable.
-    if(doc) {
-      return res.json({name: doc.name});
+    if (doc) {
+      return res.json({ name: doc.name });
     }
-    return res.status(404).json({error: 'No cat found'});
+    return res.status(404).json({ error: 'No cat found' });
   } catch (err) {
     /* If an error occurs, it means something went wrong with the database. We will
        give the user a 500 internal server error status code and an error message.
     */
     console.log(err);
-    return res.status(500).json({error: 'Something went wrong contacting the database'});
+    return res.status(500).json({ error: 'Something went wrong contacting the database' });
   }
 }
 
@@ -132,20 +168,48 @@ const setName = async (req, res) => {
      and a number of beds. When this POST request is sent to us, the bodyParser plugin
      we configured in app.js will store that information in req.body for us.
   */
-  if (!req.body.firstname || !req.body.lastname || !req.body.beds) {
+  const { firstname, lastname, type } = req.body;
+
+  if (!firstname || !lastname || !type) {
     // If they are missing data, send back an error.
-    return res.status(400).json({ error: 'firstname, lastname and beds are all required' });
+    return res.status(400).json({ error: 'firstname, and lastname are all required' });
   }
+
+  const modelList = {
+    cat: Cat,
+    dog: Dog,
+  };
+
+  const Model = modelList[type];
+
+  if (!Model) {
+    return res.status(400).json({ error: 'Invalid Type' });
+  };
 
   /* If they did send all the data, we want to create a cat and add it to our database.
      We begin by creating a cat that matches the format of our Cat schema. In this case,
      we define a name and bedsOwned. We don't need to define the createdDate, because the
      default Date.now function will populate that value for us later.
   */
-  const catData = {
-    name: `${req.body.firstname} ${req.body.lastname}`,
-    bedsOwned: req.body.beds,
+  const petData = {
+    name: `${firstname} ${lastname}`,
+
   };
+
+  if (type === 'cat') {
+    if (!req.body.beds) {
+      return res.status(400).json({ error: 'beds is required for cats' });
+    }
+    petData.bedsOwned = req.body.beds;
+  }
+
+  if (type === 'dog') {
+    if (!req.body.breed || !req.body.age) {
+      return res.status(400).json({ error: 'bred and age are required for dogs' });
+    }
+    petData.breed = req.body.breed;
+    petData.age = req.body.age;
+  }
 
   /* Once we have our cat object set up. We want to turn it into something the database
      can understand. To do this, we create a new instance of a Cat using the Cat model
@@ -153,7 +217,7 @@ const setName = async (req, res) => {
 
      Note that this does NOT store the cat in the database. That is the next step.
   */
-  const newCat = new Cat(catData);
+  const newPet = new Model(petData);
 
   /* We have now setup a cat in the right format. We now want to store it in the database.
      Again, because the database and node server are separate things entirely we have no
@@ -169,11 +233,27 @@ const setName = async (req, res) => {
        databases response. If something goes wrong, we will end up in our catch() statement. If
        not, we will return a 201 to the user with the cat info.
     */
-    await newCat.save();
-    return res.status(201).json({
-      name: newCat.name,
-      beds: newCat.bedsOwned,
-    });
+    await newPet.save();
+
+    const formatedData = {
+      cat: (newPet) => ({
+        name: newPet.name,
+        details: {
+          bedsOwned: newPet.bedsOwned,
+        },
+
+      }),
+
+      dog: (newPet) => ({
+        name: newPet.name,
+        details: {
+          breed: newPet.breed,
+          age: newPet.age,
+        },
+      }),
+    };
+
+    return res.status(201).json(formatedData[type](newPet));
   } catch (err) {
     /* If something goes wrong while communicating with the database, log the error and send
        an error message back to the client. Note that our return will return us from the setName
@@ -181,12 +261,12 @@ const setName = async (req, res) => {
        as being our "if the try worked"
     */
     console.log(err);
-    return res.status(500).json({ error: 'failed to create cat' });
+    return res.status(500).json({ error: 'failed to create ' + type });
   }
 };
 
 // Function to handle searching a cat by name.
-const searchName = async (req, res) => {
+const searchName = async (req, res, petType) => {
   /* When the user makes a POST request, bodyParser populates req.body with the parameters
      as we saw in setName() above. In the case of searchName, the user is making a GET request.
      GET requests do not have a body, but they can have query parameters. bodyParser will also
@@ -194,8 +274,29 @@ const searchName = async (req, res) => {
 
      If the user does not give us a name to search by, throw an error.
   */
-  if (!req.query.name) {
+
+  const name = req.query.name;
+  const type = petType;
+
+
+  if (!name) {
     return res.status(400).json({ error: 'Name is required to perform a search' });
+  }
+
+  if (!type) {
+    return res.status(400).json({ error: 'Type (cat or dog) is required' });
+  }
+
+  // choosing correct model
+  let Model;
+  if (type === 'cat') {
+    Model = Cat;
+  }
+  else if (type === 'dog') {
+    Model = Dog;
+  }
+  else {
+    return res.status(400).json({ error: 'Invalid or unimplemented' });
   }
 
   /* If they do give us a name to search, we will as the database for a cat with that name.
@@ -216,7 +317,7 @@ const searchName = async (req, res) => {
             doc object.
         3) Everything works, and an object matching the search is found.
     */
-    doc = await Cat.findOne({ name: req.query.name }).exec();
+    doc = await Model.findOne({ name }).exec();
   } catch (err) {
     // If there is an error, log it and send the user an error message.
     console.log(err);
@@ -225,11 +326,56 @@ const searchName = async (req, res) => {
 
   // If we do not find something that matches our search, doc will be empty.
   if (!doc) {
-    return res.status(404).json({ error: 'No cats found' });
+    return res.status(404).json({ error: `No ${type} was found` });
   }
 
+  
+
+  const formated = {
+    cat: (doc) => ({
+      name: doc.name,
+      details: {
+        bedsOwned: doc.bedsOwned,
+      },
+
+    }),
+
+    dog: (doc) => ({
+      name: doc.name,
+      details: {
+        breed: doc.breed,
+        age: doc.age,
+      },
+    }),
+  };
+
+
+  let result;
+
+  if (type === 'dog'){
+    let ageInc = req.query.age;
+
+    
+    if (!(ageInc === Number)){
+      ageInc = 1;
+    }
+
+    const updatePromise =  await Model.findOneAndUpdate({name: name}, { $inc: { 'age': ageInc } }, {
+      returnDocument: 'after', //Populates doc in the .then() with the version after update
+    }).lean().exec();
+
+    if (!updatePromise) {
+      return res.status(404).json({ error: `No ${type} was found` });
+    }
+
+    result = formated.dog(updatePromise);
+    return res.json(result);
+  }
+  
+
+
   // Otherwise, we got a result and will send it back to the user.
-  return res.json({ name: doc.name, beds: doc.bedsOwned });
+  return res.json(formated[type](doc));
 };
 
 /* A function for updating the last cat added to the database.
@@ -237,7 +383,7 @@ const searchName = async (req, res) => {
    the right element in the database based on query, modifying it, and updating
    it. For this example we will just update the last one we added for simplicity.
 */
-const updateLast = (req, res) => {
+const updateLast = (req, res, petType) => {
   /* We want to increase the number of beds owned by the most recently added cat.
      To accomplish this we need to use the findOneAndUpdate function. The first
      parameter is the query. Since we need to sort the results to find the most
@@ -258,16 +404,53 @@ const updateLast = (req, res) => {
 
      We can use async/await for this, or just use standard promise .then().catch() syntax.
   */
-  const updatePromise = Cat.findOneAndUpdate({}, {$inc: {'bedsOwned': 1}}, {
-    returnDocument: 'after', //Populates doc in the .then() with the version after update
-    sort: {'createdDate': 'descending'}
-  }).lean().exec();
 
-  // If we successfully save/update them in the database, send back the cat's info.
-  updatePromise.then((doc) => res.json({
-    name: doc.name,
-    beds: doc.bedsOwned,
-  }));
+
+  if (!petType) {
+    return res.status(400).json({ error: 'Type (cat or dog) is required [owner info]' });
+  }
+
+  const petTypeings = {
+    cat: Cat,
+    dog: Dog,
+  };
+
+  const Model = petTypeings[petType];
+
+  if (!Model) {
+    return res.status(400).json({ error: 'Invalid Type' });
+  };
+
+  let updatePromise;
+
+  if (petType === "cat") {
+     updatePromise = Model.findOneAndUpdate({}, { $inc: { 'bedsOwned': 1 } }, {
+      returnDocument: 'after', //Populates doc in the .then() with the version after update
+      sort: { 'createdDate': 'descending' }
+    }).lean().exec();
+
+    // If we successfully save/update them in the database, send back the cat's info.
+    updatePromise.then((doc) => res.json({
+      name: doc.name,
+      bedsOwned: doc.bedsOwned,
+    }));
+  }
+  else if (petType === 'dog') {
+     updatePromise = Model.findOneAndUpdate({}, { $inc: { 'age': 1 } }, {
+      returnDocument: 'after', //Populates doc in the .then() with the version after update
+      sort: { 'createdDate': 'descending' }
+    }).lean().exec();
+
+    // If we successfully save/update them in the database, send back the cat's info.
+    updatePromise.then((doc) => res.json({
+      name: doc.name,
+      age: doc.age,
+    }));
+  }
+  else{
+    return res.status(500).json({ error: 'Something went wrong. petType check did not work' });
+  }
+
 
   // If something goes wrong saving to the database, log the error and send a message to the client.
   updatePromise.catch((err) => {
@@ -289,6 +472,7 @@ module.exports = {
   page1: hostPage1,
   page2: hostPage2,
   page3: hostPage3,
+  page4: hostPage4,
   getName,
   setName,
   updateLast,
